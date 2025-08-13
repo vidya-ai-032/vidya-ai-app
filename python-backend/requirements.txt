@@ -1,0 +1,9 @@
+# python-backend/requirements.txt
+# FastAPI for the web server
+fastapi==0.111.0
+uvicorn==0.29.0 # ASGI server for FastAPI
+
+# LangChain and PDF loader dependencies
+langchain==0.2.1
+langchain-community==0.2.1 # FIXED: Updated to compatible version
+pypdf==4.2.0 # A common PDF loader for LangChain
