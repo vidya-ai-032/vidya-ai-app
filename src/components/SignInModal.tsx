@@ -100,13 +100,31 @@ const SignInModal: React.FC<SignInModalProps> = ({ isOpen, onClose }) => {
           onClick={handleGoogleSignIn}
           className="w-full flex items-center justify-center px-6 py-3 border border-gray-300 rounded-lg shadow-sm text-base font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition-all duration-200"
         >
-          <img
-            src="https://www.svgrepo.com/show/353521/google-icon.svg" // Google icon SVG
-            alt="Google icon"
-            width={20}
-            height={20}
+          {/* Inline SVG for Google icon (Updated for proper rendering) */}
+          <svg
             className="mr-3"
-          />
+            width="20"
+            height="20"
+            viewBox="0 0 24 24"
+            xmlns="http://www.w3.org/2000/svg"
+          >
+            <path
+              d="M12.0001 4.75C14.7865 4.75 17.0622 5.92317 18.2215 7.42L20.6713 5.09341C19.0689 3.49103 16.6347 2.25 12.0001 2.25C7.36543 2.25 3.34863 4.97653 1.28916 8.66579L4.52047 11.1156C5.25211 7.42767 8.39626 4.75 12.0001 4.75Z"
+              fill="#EA4335"
+            />
+            <path
+              d="M22.0041 12.247C22.0041 11.4513 21.9378 10.6865 21.8087 9.94727H12.0001V14.21H18.216C17.9443 15.6981 17.229 16.8643 16.1369 17.6908L18.9295 19.8574C20.6358 18.2855 22.0041 15.9312 22.0041 12.247Z"
+              fill="#4285F4"
+            />
+            <path
+              d="M3.13037 14.505C2.98737 13.6987 2.98737 12.8454 3.13037 12.0391L0.362171 9.87242C-0.213892 11.0664 -0.213892 12.6507 0.362171 13.8447L3.13037 14.505Z"
+              fill="#FBBC04"
+            />
+            <path
+              d="M12.0001 22.75C8.20459 22.75 5.01353 20.6756 3.13037 17.1187L6.36168 14.6689C7.38792 17.5639 10.3846 19.5562 12.0001 19.5562C14.6042 19.5562 16.8962 18.6892 18.5434 17.1611L21.0506 19.3496C19.1608 22.1587 15.7708 22.75 12.0001 22.75Z"
+              fill="#34A853"
+            />
+          </svg>
           Continue with Google
         </button>
 

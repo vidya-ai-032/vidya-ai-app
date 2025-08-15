@@ -23,6 +23,7 @@ import {
   deleteDoc,
   getDoc,
   setDoc,
+  serverTimestamp,
 } from "firebase/firestore";
 // Import Firebase Storage functions for upload and deleting
 import {
@@ -128,6 +129,14 @@ const LibraryPage: React.FC = () => {
   // Pagination states
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 10;
+
+  // State to track the category of a recently processed (uploaded/analyzed) document
+  // Used to automatically expand the relevant accordion sections.
+  const [recentlyProcessedCategory, setRecentlyProcessedCategory] = useState<{
+    subject: string;
+    topic: string;
+    chapter: string;
+  } | null>(null);
 
   // Listen for Firebase Auth state changes and fetch/create Firestore user profile
   useEffect(() => {
@@ -245,92 +254,6 @@ const LibraryPage: React.FC = () => {
   };
 
   /**
-   * Handles the file upload process to Firebase Storage.
-   * Updates upload progress in real-time.
-   * @param file The file to upload.
-   */
-  const handleFileUpload = (fileToUpload: File) => {
-    // Renamed parameter to avoid conflict with state
-    if (!currentUser) {
-      alert("Please sign in to upload documents.");
-      return;
-    }
-
-    // Reset progress and set file name for display
-    // These are now handled by handleUploadAndAnalyzeClick
-    // setUploadProgress(0);
-    // setUploadingFileName(fileToUpload.name);
-
-    // Create a storage reference
-    const storageRef = ref(
-      storage,
-      `user_uploads/${currentUser.uid}/${fileToUpload.name}`
-    );
-    const uploadTask = uploadBytesResumable(storageRef, fileToUpload);
-
-    // Listen for state changes, errors, and completion of the upload.
-    uploadTask.on(
-      "state_changed",
-      (snapshot) => {
-        // Get task progress, including the number of bytes uploaded and the total number of bytes to be uploaded
-        const progress =
-          (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
-        setUploadProgress(Math.round(progress)); // Update state for progress bar
-        console.log("Upload is " + progress + "% done");
-        switch (snapshot.state) {
-          case "paused":
-            console.log("Upload is paused");
-            break;
-          case "running":
-            console.log("Upload is running");
-            break;
-        }
-      },
-      (error) => {
-        // Handle unsuccessful uploads
-        console.error("Upload failed:", error);
-        alert(`Failed to upload "${fileToUpload.name}": ${error.message}`);
-        setProcessState("failed"); // Set process state to failed
-        setUploadProgress(0); // Reset progress on error
-        setUploadingFileName(null);
-      },
-      () => {
-        // Handle successful uploads on complete
-        getDownloadURL(uploadTask.snapshot.ref).then((downloadURL) => {
-          console.log("File available at", downloadURL);
-          // Save document metadata to Firestore
-          const docMetadata: Omit<LibraryDocument, "id"> = {
-            uid: currentUser.uid,
-            fileName: fileToUpload.name,
-            fileType: fileToUpload.type,
-            fileSize: fileToUpload.size,
-            downloadURL: downloadURL,
-            uploadedAt: new Date(),
-            status: "uploaded", // Initial status
-          };
-          saveDocumentMetadata(docMetadata);
-          setUploadingFileName(null); // Clear uploading file name
-          // After successful upload and metadata save, immediately trigger analysis
-          // Note: `handleAnalyzeDocument` will update document status to 'processing'
-          // and then 'analyzed' after AI call.
-          // This call needs the document ID, which we don't have until saveDocumentMetadata
-          // completes and firestore's onSnapshot updates.
-          // A more robust solution might involve:
-          // 1. Getting the docId from addDoc and passing it directly.
-          // 2. Or, having a separate "upload and then analyze" button flow that handles the sequence.
-          // For now, let's assume the onSnapshot will eventually catch up and trigger analyze.
-          // Or, alternatively, the "Upload & Analyze" button below will take over this logic.
-          // For now, removing immediate analyze call here.
-          // The "Upload & Analyze" button will handle the complete sequence.
-
-          // Trigger analyze directly if it's part of the 'Upload & Analyze' button flow
-          // This logic will be moved to the button's onClick.
-        });
-      }
-    );
-  };
-
-  /**
    * Handles files dropped onto the drag-and-drop area.
    * @param e DragEvent
    */
@@ -373,6 +296,14 @@ const LibraryPage: React.FC = () => {
       return;
     }
 
+    if (!firestoreUser?.geminiApiKey) {
+      alert(
+        "Please set your Gemini API Key in the settings before uploading documents."
+      );
+      router.push("/settings"); // Redirect to settings page
+      return;
+    }
+
     // Set process state to uploading
     setProcessState("uploading");
     setUploadProgress(0);
@@ -412,7 +343,7 @@ const LibraryPage: React.FC = () => {
               fileType: selectedFile.type,
               fileSize: selectedFile.size,
               downloadURL: downloadURL,
-              uploadedAt: new Date(),
+              uploadedAt: serverTimestamp(), // Use serverTimestamp for Firestore
               status: "uploaded", // Initial status
             };
 
@@ -425,12 +356,17 @@ const LibraryPage: React.FC = () => {
                 "Document metadata saved to Firestore with ID:",
                 docRef.id
               );
-              // Instead of alert, update state for a message or just proceed
 
               setProcessState("analyzing"); // Set process state to analyzing
 
               // Now call handleAnalyzeDocument with the newly uploaded document's data
-              await handleAnalyzeDocument({ id: docRef.id, ...docMetadata });
+              // Ensure we pass a complete LibraryDocument object including the newly generated ID
+              // Mock uploadedAt for immediate object use with toDate() method.
+              await handleAnalyzeDocument({
+                id: docRef.id,
+                ...docMetadata,
+                uploadedAt: { toDate: () => new Date() },
+              });
               setProcessState("complete"); // Set process state to complete after analysis
               resolve();
             } catch (error) {
@@ -465,6 +401,15 @@ const LibraryPage: React.FC = () => {
       alert("Please sign in to analyze documents.");
       return;
     }
+
+    if (!firestoreUser?.geminiApiKey) {
+      alert(
+        "Please set your Gemini API Key in the settings before analyzing documents."
+      );
+      router.push("/settings"); // Redirect to settings page
+      return;
+    }
+
     // Prevent multiple analysis requests for a document
     if (document.status === "processing") {
       alert("Document is already being analyzed.");
@@ -517,7 +462,6 @@ const LibraryPage: React.FC = () => {
 
       // Extract structured metadata and open the Document Description Modal
       const { analysis, structuredMetadata } = result;
-      // Removed direct opening of AnalysisModal here.
 
       // After AI analysis, open the Document Description Modal
       // Use original file name as fallback for documentName, and current doc ID
@@ -536,6 +480,15 @@ const LibraryPage: React.FC = () => {
       setCurrentDocumentMetadata(initialDocDataForModal);
       setIsCurrentAnalysisNew(true); // Indicate it's a new analysis triggering the modal
       setIsDocumentDescriptionModalOpen(true); // Open the Document Description Modal
+
+      // Set the recently processed category to auto-expand the relevant accordion sections
+      setRecentlyProcessedCategory({
+        subject: structuredMetadata?.subject || "Uncategorized Subject",
+        topic: structuredMetadata?.topic || "Uncategorized Topic",
+        chapter: structuredMetadata?.chapter || "Uncategorized Chapter",
+      });
+      // Clear this after a short delay to prevent other sections from expanding by default on subsequent renders
+      setTimeout(() => setRecentlyProcessedCategory(null), 3000);
 
       // onSnapshot will handle updating the state with the new analysisResult and status.
       // Removed manual setUserDocuments update here as onSnapshot handles it, preventing potential race conditions
@@ -588,7 +541,7 @@ const LibraryPage: React.FC = () => {
           topic: updatedMetadata.topic,
           chapter: updatedMetadata.chapter,
           dateCreated: updatedMetadata.dateCreated,
-          updatedAt: new Date(), // Update the timestamp
+          updatedAt: serverTimestamp(), // Use serverTimestamp for consistent timestamps
         },
         { merge: true }
       ); // Use merge: true to avoid overwriting other fields
@@ -597,7 +550,7 @@ const LibraryPage: React.FC = () => {
         "Document metadata updated in Firestore for ID:",
         currentDocumentMetadata.id
       );
-      // The onSnapshot listener will update userDocuments state automatically
+      // The onSnapshot listener will automatically update userDocuments state
     } catch (error: any) {
       console.error("Error saving document description to Firestore:", error);
       throw new Error(`Failed to save document description: ${error.message}`);
@@ -851,7 +804,7 @@ const LibraryPage: React.FC = () => {
               <div className="py-1" role="none">
                 <button
                   onClick={() => {
-                    router.push(`/learn/${doc.id}`);
+                    router.push(`/learn/${doc.id}`); // Link to the new dynamic learning page
                     onDropdownToggle(null);
                   }}
                   className="block px-4 py-2 text-sm text-gray-700 hover:bg-indigo-600 hover:text-white cursor-pointer w-full text-left"
@@ -950,8 +903,18 @@ const LibraryPage: React.FC = () => {
     title: string;
     children: React.ReactNode;
     level: "subject" | "topic" | "chapter";
-  }> = ({ title, children, level }) => {
-    const [isExpanded, setIsExpanded] = useState(true); // Default to expanded for initial view
+    shouldBeInitiallyExpanded?: boolean; // New prop for programmatic expansion
+  }> = ({ title, children, level, shouldBeInitiallyExpanded = false }) => {
+    // State to manage the expanded/collapsed status
+    const [isExpanded, setIsExpanded] = useState(shouldBeInitiallyExpanded);
+
+    // Effect to expand if shouldBeInitiallyExpanded becomes true after initial render,
+    // but without collapsing if the user manually expands it later.
+    useEffect(() => {
+      if (shouldBeInitiallyExpanded) {
+        setIsExpanded(true);
+      }
+    }, [shouldBeInitiallyExpanded]);
 
     const headingClass =
       level === "subject"
@@ -1043,50 +1006,6 @@ const LibraryPage: React.FC = () => {
       {/* Main Content Area */}
       <main className="flex-grow p-6 md:p-10">
         <div className="max-w-4xl mx-auto bg-white rounded-xl shadow-lg p-6 md:p-8">
-          {/* Upload Progress Bar */}
-          <div className="mb-8">
-            <h3 className="text-lg font-semibold text-gray-700 mb-2">
-              {/* Only show "Uploading: FileName" if an upload is in progress */}
-              {processState === "uploading" &&
-                `Uploading: ${uploadingFileName}`}
-              {processState === "analyzing" &&
-                `Analyzing: ${uploadingFileName}`}
-              {processState !== "uploading" &&
-                processState !== "analyzing" &&
-                "Upload Progress"}
-            </h3>
-            {/* Show progress bar only when uploading or analyzing */}
-            {(processState === "uploading" || processState === "analyzing") && (
-              <div className="w-full bg-gray-200 rounded-full h-2.5">
-                <div
-                  className="bg-indigo-500 h-2.5 rounded-full"
-                  style={{ width: `${uploadProgress}%` }} // Dynamic width based on uploadProgress state
-                  aria-valuenow={uploadProgress}
-                  aria-valuemin={0}
-                  aria-valuemax={100}
-                  role="progressbar"
-                ></div>
-              </div>
-            )}
-            {/* Only show percentage if upload is in progress or completed */}
-            {(processState === "uploading" || processState === "analyzing") && (
-              <p className="text-right text-sm text-gray-500 mt-1">
-                {uploadProgress}%
-              </p>
-            )}
-            {/* Show status message in place of percentage after upload/analysis is complete or failed */}
-            {processState === "complete" && (
-              <p className="text-right text-sm text-green-600 mt-1">
-                Process Complete!
-              </p>
-            )}
-            {processState === "failed" && (
-              <p className="text-right text-sm text-red-500 mt-1">
-                Process Failed.
-              </p>
-            )}
-          </div>
-
           {/* Upload Document Section */}
           <div className="mb-8">
             <h2 className="text-2xl font-bold text-gray-800 mb-4">
@@ -1114,41 +1033,76 @@ const LibraryPage: React.FC = () => {
                 onChange={handleFileSelect} // Updated to only store file
               />
               <label htmlFor="file-upload" className="cursor-pointer">
-                <div className="text-gray-400 text-5xl mb-3">
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    strokeWidth={1.5}
-                    stroke="currentColor"
-                    className="w-12 h-12 mx-auto"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      d="M12 16.5V9.75m0 0l3 3m-3-3l-3 3M6.75 19.5a4.5 4.5 0 01-1.41-8.775 5.25 5.25 0 0110.233-2.33 3 3 0 013.758 3.848A3.752 3.752 0 0118 19.5H6.75z"
-                    />
-                  </svg>
-                </div>
-                <p className="text-gray-600 font-medium">
-                  Drag and drop or browse
-                </p>
-                {/* Dynamically show selected file or prompt */}
-                <p className="text-sm text-gray-500 mt-1">
-                  {selectedFile
-                    ? `File selected: ${selectedFile.name}`
-                    : "PDF, DOCX, PPTX, TXT"}
-                </p>
-                {/* Show status like "Analyzing..." directly in the box only if processState is analyzing */}
-                {processState === "analyzing" && (
-                  <p className="text-sm text-blue-500 mt-2 font-semibold">
-                    Analyzing document...
+                {/* Conditionally display icon or progress based on processState */}
+                {processState === "idle" ||
+                processState === "fileSelected" ||
+                processState === "failed" ||
+                processState === "complete" ? (
+                  <div className="text-gray-400 text-5xl mb-3">
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      strokeWidth={1.5}
+                      stroke="currentColor"
+                      className="w-12 h-12 mx-auto"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        d="M12 16.5V9.75m0 0l3 3m-3-3l-3 3M6.75 19.5a4.5 4.5 0 01-1.41-8.775 5.25 5.25 0 0110.233-2.33 3 3 0 013.758 3.848A3.752 3.752 0 0118 19.5H6.75z"
+                      />
+                    </svg>
+                  </div>
+                ) : null}
+
+                {/* Dynamically show selected file or prompt, and status/progress */}
+                {processState === "uploading" ||
+                processState === "analyzing" ? (
+                  <>
+                    <p className="text-indigo-600 font-medium">
+                      {processState === "uploading"
+                        ? `Uploading: ${uploadingFileName} ${uploadProgress}%`
+                        : `Analyzing document: ${uploadingFileName}`}
+                    </p>
+                    <div className="w-full bg-gray-200 rounded-full h-2.5 mt-2">
+                      <div
+                        className="bg-indigo-500 h-2.5 rounded-full"
+                        style={{ width: `${uploadProgress}%` }}
+                        aria-valuenow={uploadProgress}
+                        aria-valuemin={0}
+                        aria-valuemax={100}
+                        role="progressbar"
+                      ></div>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-gray-600 font-medium">
+                      Drag and drop or browse
+                    </p>
+                    <p className="text-sm text-gray-500 mt-1">
+                      {selectedFile
+                        ? `File selected: ${selectedFile.name}`
+                        : "PDF, DOCX, PPTX, TXT"}
+                    </p>
+                  </>
+                )}
+                {/* Show process state messages (complete/failed) within the box */}
+                {processState === "complete" && (
+                  <p className="text-sm text-green-600 mt-2 font-semibold">
+                    Process Complete! Document analyzed successfully.
+                  </p>
+                )}
+                {processState === "failed" && (
+                  <p className="text-sm text-red-500 mt-2 font-semibold">
+                    Process Failed. Please try again.
                   </p>
                 )}
               </label>
             </div>
             <button
-              onClick={handleUploadAndAnalyzeClick} // NEW: Call the combined upload and analyze handler
+              onClick={handleUploadAndAnalyzeClick} // Call the combined upload and analyze handler
               className="mt-6 w-full px-6 py-3 bg-indigo-600 text-white font-semibold rounded-lg shadow-md hover:bg-indigo-700 transition-colors"
               disabled={
                 !selectedFile ||
@@ -1172,25 +1126,37 @@ const LibraryPage: React.FC = () => {
             {allSortedDocuments.length > 0 ? (
               <>
                 {/* All documents as a hierarchical list */}
-                {/* Removed the redundant 'Library' subheading */}
                 <div className="space-y-4">
                   {Object.entries(groupedDocuments).map(([subject, topics]) => (
                     <AccordionSection
                       key={subject}
                       title={subject || "Uncategorized Subject"}
                       level="subject"
+                      shouldBeInitiallyExpanded={
+                        recentlyProcessedCategory?.subject === subject
+                      }
                     >
                       {Object.entries(topics).map(([topic, chapters]) => (
                         <AccordionSection
                           key={topic}
                           title={topic || "Uncategorized Topic"}
                           level="topic"
+                          shouldBeInitiallyExpanded={
+                            recentlyProcessedCategory?.subject === subject &&
+                            recentlyProcessedCategory?.topic === topic
+                          }
                         >
                           {Object.entries(chapters).map(([chapter, docs]) => (
                             <AccordionSection
                               key={chapter}
                               title={chapter || "Uncategorized Chapter"}
                               level="chapter"
+                              shouldBeInitiallyExpanded={
+                                recentlyProcessedCategory?.subject ===
+                                  subject &&
+                                recentlyProcessedCategory?.topic === topic &&
+                                recentlyProcessedCategory?.chapter === chapter
+                              }
                             >
                               <div className="space-y-3">
                                 {docs.map(

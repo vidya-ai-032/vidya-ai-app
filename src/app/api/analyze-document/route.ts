@@ -101,8 +101,8 @@ export async function POST(req: NextRequest) {
     }
 
     // Initialize Gemini model with the user's API key
-    const genAI = new GoogleGenerativeAI(geminiApiKey);
     // Use gemini-2.5-flash-preview-05-20 for text and structured responses
+    const genAI = new GoogleGenerativeAI(geminiApiKey);
     const textModel = genAI.getGenerativeModel({
       model: "gemini-2.5-flash-preview-05-20",
     });
@@ -201,25 +201,47 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // PROMPT FOR GENERAL ANALYSIS (TEXT)
-    const analysisPrompt = `Analyze the following educational document.
-    File Name: "${fileName}"
-    File Type: "${fileType}"
-    Document URL: ${documentUrl} (This URL is for reference; the content for analysis is provided below.)
+    // PROMPT FOR GENERAL ANALYSIS (TEXT) - Now focused ONLY on structured Markdown summary
+    const analysisPrompt = `Generate a precise, condensed summary of the following educational document. Focus exclusively on the academic or core subject matter of the document. **Ignore and filter out any promotional content, advertisements, or information unrelated to the main educational topic (e.g., course schemes, institution details, personal endorsements).**
+    The summary should be between 10-15 lines and structured using Markdown headings for each section, as follows:
+
+    ### 1. Why this topic matters (Hook)
+    [1-2 sentences explaining relevance]
+
+    ### 2. Core Concepts
+    [2-3 sentences introducing core concepts with context]
+
+    ### 3. Key Points & Processes
+    [4-5 sentences explaining key points, theories, or processes]
+
+    ### 4. Real-world Applications
+    [2 sentences on applications or examples]
+
+    ### 5. Conclusion & Takeaways
+    [2 sentences summarizing key takeaways and actionable insights]
+
+    STYLE GUIDELINES:
+    - Use active voice and clear transitions within each section.
+    - Adapt vocabulary to student level.
+    - Include specific examples from the document where appropriate.
+    - Maintain logical flow between concepts.
+    - The content within each heading should be prose; avoid bullet points within these sections.
+
+    AVOID:
+    - Technical jargon without explanation.
+    - Redundant information.
+    - Overly complex sentence structures.
+    - **Do NOT include multiple-choice questions or lists of key topics/subheadings in this summary output. This output is ONLY for the structured summary.**
 
     --- Document Content ---
     ${documentTextContent}
     --- End Document Content ---
-
-    Provide:
-    1. A concise summary of the document (around 3-5 sentences).
-    2. Key topics covered in the document (as a bulleted list).
-    3. Three multiple-choice questions based on the document's content, with 4 options each (A, B, C, D) and indicate the correct answer.`;
+    `;
 
     // PROMPT FOR STRUCTURED METADATA (JSON)
     // The model will generate a JSON object based on this prompt.
     // We explicitly ask for JSON format in the prompt and set responseMimeType to 'application/json'.
-    const metadataPrompt = `Based on the following educational document, extract the following information as a JSON object:
+    const metadataPrompt = `Based on the following educational document, extract the following information as a JSON object: Focus exclusively on the academic or core subject matter of the document. **Ignore and filter out any promotional content, advertisements, or information unrelated to the main educational topic (e.g., course schemes, institution details, personal endorsements).**
     {
       "documentName": "The primary title or name of the document. Default to original filename if not clear.",
       "class": "The suggested educational class or grade level (e.g., '10th Grade', 'Primary School', 'College Level Chemistry').",
@@ -244,13 +266,11 @@ export async function POST(req: NextRequest) {
     let analysisSuccess = false;
 
     try {
-      // First, get the general analysis text
+      // First, get the general analysis text (Summary only)
       const textResult = await textModel.generateContent(analysisPrompt);
       analysisText = textResult.response.text();
 
       // Then, get the structured metadata
-      // Removed responseSchema from generationConfig as it's not directly supported for this model/SDK version
-      // Relying on prompt engineering and responseMimeType to get JSON.
       const structuredResult = await textModel.generateContent({
         contents: [{ role: "user", parts: [{ text: metadataPrompt }] }],
         generationConfig: {
